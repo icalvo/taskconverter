@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "CommandLine": {
+      "commandName": "Project",
+      "commandLineArgs": "wunderlist ticktick wunderlist-20190216-24_17_42.json wunderlist-backup-mery.csv -listsastags"
+    }
+  }
+}
