@@ -1,73 +1,58 @@
 ﻿using System;
 using System.IO;
 using System.Linq;
-using CsvHelper;
 using Library;
 using Library.Generic;
 
 namespace CommandLine
 {
-    internal class Program
+    internal static class Program
     {
+        private static IServiceProvider _serviceProvider = new ServiceProvider();
+
         internal static void Main(string[] args)
         {
-            GenericConverter converter = GetConverter(args[0], args[1],
-                args.Skip(4).ToArray());
-            if (converter == null)
+            if (args.Length < 4)
             {
-                Console.Error.WriteLine("Unsupported conversion!");
-                return;
+                throw new ArgumentException("At least 4 parameters are needed (source, target, source file, target file", nameof(args));
             }
 
-            string sourceFileName = args[2];
-            string targetFileName = args[3];
-            converter.Convert(
-                File.OpenRead(sourceFileName),
-                File.OpenWrite(targetFileName));
-        }
-
-        private static GenericConverter GetConverter(string source,
-            string target, string[] options)
-        {
-            IReader<TaskDatabase> reader = GetReader(source.ToLowerInvariant());
-            IWriter<TaskDatabase> writer = GetWriter(target.ToLowerInvariant());
+            _serviceProvider = new ServiceProvider();
+            string source = args[0];
+            string target = args[1];
+            var options = args.Skip(4).ToArray();
+            var sourceModelConverter = _serviceProvider.GetInstanceByTypeName<ITaskConverter>(source + "Converter");
+            var targetModelConverter = _serviceProvider.GetInstanceByTypeName<ITaskConverter>(target + "Converter");
+            IReader<TaskDatabase> reader = sourceModelConverter.Reader ?? throw new ArgumentException("Cannot read tasks from " + source, nameof(source));
+            IWriter<TaskDatabase> writer = targetModelConverter.Writer ?? throw new ArgumentException("Cannot write tasks from " + source, nameof(source));
             var opts = new ConversionOptions
             {
                 ListConversionMode = options.Contains("-listsastags")
                     ? ListConversionMode.ListsAsTags
                     : ListConversionMode.ListsAsLists
             };
-            return new GenericConverter(reader, writer, opts);
+            string sourceFileName = args[2];
+            string targetFileName = args[3];
+            var sourceStream = File.OpenRead(sourceFileName);
+            var targetStream = File.OpenWrite(targetFileName);
+
+            TaskDatabase db = reader.Read(sourceStream);
+            Transform(source, db, opts);
+            writer.Write(db, targetStream);
         }
 
-        private static IReader<TaskDatabase> GetReader(string source)
+        private static void Transform(string inputName, TaskDatabase source, ConversionOptions options)
         {
-            var type = typeof(ITaskDatabaseReader);
-            return 
-                AppDomain.CurrentDomain.GetAssemblies()
-                .Where(assembly => !assembly.FullName.StartsWith("System."))
-                .SelectMany(s => s.GetTypes())
-                .Where(p => type.IsAssignableFrom(p))
-                .Where(p => !p.IsAbstract)
-                .Where(p => p.HasParameterlessConstructor())
-                .Select(Activator.CreateInstance)
-                .Cast<ITaskDatabaseReader>()
-                .First(o => o.Name == source);
-        }
-
-        private static IWriter<TaskDatabase> GetWriter(string target)
-        {
-            var type = typeof(ITaskDatabaseWriter);
-            return
-                AppDomain.CurrentDomain.GetAssemblies()
-                .Where(assembly => !assembly.FullName.StartsWith("System."))
-                .SelectMany(s => s.GetTypes())
-                .Where(p => type.IsAssignableFrom(p))
-                .Where(p => !p.IsAbstract)
-                .Where(p => p.HasParameterlessConstructor())
-                .Select(Activator.CreateInstance)
-                .Cast<ITaskDatabaseWriter>()
-                .First(o => o.Name == target);
+            if (options.ListConversionMode == ListConversionMode.ListsAsTags)
+            {
+                var uniqueList = new TaskList {Id = 0, Title = inputName + " import"};
+                source.Lists = new[] {uniqueList};
+                foreach (var task in source.Tasks)
+                {
+                    task.Tags = new[] {task.List.Title};
+                    task.List = uniqueList;
+                }
+            }
         }
     }
 }
